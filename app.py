@@ -518,9 +518,19 @@ def health():
 # Útil cuando agregamos o cambiamos documentos en la carpeta data/.
 @app.post("/api/rebuild")
 def rebuild():
-    get_vectorstore(force_rebuild=True)
-    return {"ok": True, "message": "Índice reconstruido correctamente."}
-
+    try:
+        get_vectorstore(force_rebuild=True)
+        return {
+            "ok": True,
+            "message": f"Índice reconstruido correctamente en {DB_DIR}."
+        }
+    except Exception as error:
+        return {
+            "ok": False,
+            "message": f"Error reconstruyendo índice: {type(error).__name__}: {str(error)}",
+            "db_dir": str(DB_DIR),
+            "db_absolute": str(DB_DIR.resolve()),
+        }
 
 # Limpia la memoria de conversación de la sesión actual.
 @app.post("/api/memory/clear")
