@@ -1,8 +1,31 @@
+# ============================================================
+# DEMO CLASE 3 / MÓDULO 1
+# Asistente IA con FastAPI + LangChain + OpenAI + Chroma
+# ============================================================
+#
+#
+# 1. Primero importamos las librerías.
+# 2. Después cargamos variables de entorno y configuraciones.
+# 3. Luego definimos un contexto fijo del curso.
+# 4. Creamos una memoria simple de conversación en RAM.
+# 5. Levantamos la app FastAPI y definimos los modelos de entrada/salida.
+# 6. Creamos funciones auxiliares para memoria, documentos, vector store y RAG.
+# 7. Creamos un router/clasificador que decide cómo responder.
+# 8. Creamos prompts para responder con RAG o recomendar arquitectura.
+# 9. Finalmente definimos los endpoints de la API.
+#
+# ============================================================
+
+# 1) IMPORTS BÁSICOS DE PYTHON
+# os permite leer variables de entorno, por ejemplo OPENAI_MODEL.
 import os
 import shutil
 from pathlib import Path
 from typing import Dict, List
 
+
+# 2) LIBRERÍAS DE BACKEND/API Y VALIDACIÓN
+# dotenv carga variables desde el archivo .env.
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -10,6 +33,10 @@ from pydantic import BaseModel
 from pptx import Presentation
 from openai import OpenAI
 
+
+# 3) LIBRERÍAS DE LANGCHAIN / RAG
+# ChatOpenAI conecta con el modelo conversacional.
+# OpenAIEmbeddings convierte texto en vectores para búsqueda semántica.
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
@@ -17,15 +44,27 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 
+# 4) CARGA DE CONFIGURACIÓN
+# Busca un archivo .env y carga claves/modelos configurados ahí.
 load_dotenv()
 
+# Carpeta donde dejamos los materiales del curso: PPTX, PDF, TXT o MD.
 DATA_DIR = Path("data")
+
+# Carpeta local donde Chroma guardará el índice vectorial.
+# Si ya existe, se reutiliza para no reconstruir embeddings cada vez.
 DB_DIR = Path("chroma_modulo1")
 
+# Modelo principal para clasificar y responder.
 MODEL_NAME = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+# Modelo usado cuando activamos búsqueda web.
 WEB_MODEL_NAME = os.getenv("OPENAI_WEB_MODEL", MODEL_NAME)
+# Modelo de embeddings: transforma texto en vectores.
 EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 
+# 5) CONTEXTO FIJO DEL CURSO
+# Este texto no viene del usuario ni del RAG: es conocimiento estable
+# que la app siempre tendrá disponible para responder datos administrativos.
 COURSE_CONTEXT = """
 Datos fijos del curso:
 - Profesor / relator: Bastián Campusano.
@@ -41,29 +80,43 @@ Datos fijos del curso:
 CONVERSATION_MEMORY: Dict[str, List[Dict[str, str]]] = {}
 MAX_MEMORY_MESSAGES = 8
 
+# 6) CREACIÓN DE LA APLICACIÓN FASTAPI
+# Aquí nace el backend. FastAPI expone endpoints como /api/ask o /api/health.
 app = FastAPI(title="Asistente Módulo 1")
+
+# Cliente directo de OpenAI. Lo usamos para la herramienta de web_search.
 client = OpenAI()
 
 
+# 7) MODELOS DE DATOS DE LA API
+# Pydantic define y valida la estructura de los datos que entran y salen.
+# AskRequest representa lo que manda el frontend cuando el usuario pregunta.
 class AskRequest(BaseModel):
     question: str
     session_id: str = "default"
 
 
+# AskResponse representa la respuesta estándar del backend al frontend.
 class AskResponse(BaseModel):
     answer: str
     mode: str
     sources: List[str]
 
 
+# ClearMemoryRequest permite limpiar la memoria de una sesión específica.
 class ClearMemoryRequest(BaseModel):
     session_id: str = "default"
 
 
+# 8) MEMORIA CONVERSACIONAL SIMPLE
+# Recupera el historial asociado a una sesión.
+# En producción esto podría guardarse en Redis, Postgres u otra base de datos.
 def get_memory(session_id: str) -> List[Dict[str, str]]:
     return CONVERSATION_MEMORY.get(session_id, [])
 
 
+# Guarda un turno completo: mensaje del usuario + respuesta del asistente.
+# Se limita a MAX_MEMORY_MESSAGES para que el prompt no crezca indefinidamente.
 def save_turn(session_id: str, user_message: str, assistant_message: str) -> None:
     CONVERSATION_MEMORY.setdefault(session_id, [])
     CONVERSATION_MEMORY[session_id].append({"role": "user", "content": user_message})
@@ -71,6 +124,8 @@ def save_turn(session_id: str, user_message: str, assistant_message: str) -> Non
     CONVERSATION_MEMORY[session_id] = CONVERSATION_MEMORY[session_id][-MAX_MEMORY_MESSAGES:]
 
 
+# Convierte la memoria en texto plano para inyectarla en los prompts.
+# Esto permite preguntas como "¿y en ese caso?" usando contexto previo.
 def format_memory(session_id: str) -> str:
     memory = get_memory(session_id)
     if not memory:
@@ -84,10 +139,15 @@ def format_memory(session_id: str) -> str:
     return "\n".join(lines)
 
 
+# Limpia la memoria de una sesión.
+# Útil para mostrar en clase qué pasa con y sin historial.
 def clear_session_memory(session_id: str) -> None:
     CONVERSATION_MEMORY.pop(session_id, None)
 
 
+# 9) CARGA DE DOCUMENTOS DEL CURSO
+# Esta función lee una presentación PPTX y extrae texto slide por slide.
+# Cada slide se transforma en un Document de LangChain con metadata.
 def load_pptx_documents(file_path: Path) -> List[Document]:
     presentation = Presentation(str(file_path))
     docs = []
@@ -109,6 +169,9 @@ def load_pptx_documents(file_path: Path) -> List[Document]:
     return docs
 
 
+# Carga todos los documentos disponibles en la carpeta data/.
+# Soporta PPTX, PDF, TXT y MD.
+# Resultado: una lista de Documents lista para chunking y embeddings.
 def load_documents() -> List[Document]:
     docs = []
 
@@ -137,6 +200,11 @@ def load_documents() -> List[Document]:
     return docs
 
 
+# 10) VECTOR STORE / ÍNDICE RAG
+# Esta es una de las partes centrales de la demo.
+# - Crea embeddings.
+# - Si existe un índice Chroma previo, lo reutiliza.
+# - Si no existe, carga documentos, los divide en chunks y crea el índice.
 def get_vectorstore(force_rebuild: bool = False):
     embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
 
@@ -160,6 +228,8 @@ def get_vectorstore(force_rebuild: bool = False):
     )
 
 
+# Convierte los documentos recuperados por el retriever en texto para el prompt.
+# También agrega fuente y ubicación para que la respuesta sea más trazable.
 def format_docs(docs: List[Document]) -> str:
     if not docs:
         return "No se recuperaron fragmentos desde los materiales del módulo."
@@ -181,6 +251,8 @@ def format_docs(docs: List[Document]) -> str:
     return "\n\n".join(parts)
 
 
+# Extrae nombres de fuentes recuperadas para mostrarlas en la interfaz.
+# Esto ayuda a explicar que RAG no solo responde: también puede mostrar evidencia.
 def extract_sources(docs: List[Document]) -> List[str]:
     sources = []
 
@@ -202,6 +274,14 @@ def extract_sources(docs: List[Document]) -> List[str]:
     return sources[:6]
 
 
+# 11) ROUTER / CLASIFICADOR DE PREGUNTAS
+# Esta función decide qué camino seguirá la pregunta:
+# - MODULO: responder con contexto del curso + RAG.
+# - WEB: usar búsqueda web.
+# - DECISION: recomendar arquitectura.
+# - MIXTA: combinar web + módulo.
+#
+# Este router es una forma simple de mostrar "orquestación".
 def classify_question(question: str, memory_context: str) -> str:
     model = ChatOpenAI(model=MODEL_NAME, temperature=0)
 
@@ -241,6 +321,9 @@ Historial reciente de la sesión:
     return category
 
 
+# 12) BÚSQUEDA WEB
+# Se usa cuando el router decide que la pregunta necesita información externa
+# o actualizada, por ejemplo nombres de herramientas o ejemplos vigentes.
 def run_web_search(question: str, memory_context: str) -> str:
     response = client.responses.create(
         model=WEB_MODEL_NAME,
@@ -265,6 +348,13 @@ Reglas de respuesta:
     return response.output_text
 
 
+# 13) RESPUESTA CON CONTEXTO DEL MÓDULO + RAG
+# Aquí generamos el prompt principal para responder preguntas del curso.
+# El modelo recibe:
+# - pregunta del usuario,
+# - contexto fijo,
+# - memoria de sesión,
+# - fragmentos recuperados desde los materiales.
 def answer_with_module(question: str, module_context: str, memory_context: str) -> str:
     model = ChatOpenAI(model=MODEL_NAME, temperature=0.2)
 
@@ -321,6 +411,9 @@ Contexto recuperado desde materiales del módulo:
     }).content
 
 
+# 14) RESPUESTA PARA DECISIONES DE ARQUITECTURA
+# Esta función no solo "responde": recomienda un patrón técnico.
+# Sirve para mostrar cuándo usar API simple, chain, RAG, tool, agente o no IA.
 def answer_architecture_decision(question: str, module_context: str, memory_context: str) -> str:
     model = ChatOpenAI(model=MODEL_NAME, temperature=0.2)
 
@@ -391,11 +484,15 @@ Contexto disponible desde el módulo:
     }).content
 
 
+# 15) ENDPOINTS / RUTAS DE LA APLICACIÓN
+# Ruta principal: entrega el HTML de la interfaz visual.
 @app.get("/", response_class=HTMLResponse)
 def home():
     return HTMLResponse(INDEX_HTML)
 
 
+# Health check: permite revisar si la app está viva, qué modelo usa,
+# qué archivos hay en data/ y si existe el índice Chroma.
 @app.get("/api/health")
 def health():
     files = [p.name for p in DATA_DIR.glob("*")]
@@ -410,18 +507,32 @@ def health():
     }
 
 
+# Reconstruye el índice vectorial.
+# Útil cuando agregamos o cambiamos documentos en la carpeta data/.
 @app.post("/api/rebuild")
 def rebuild():
     get_vectorstore(force_rebuild=True)
     return {"ok": True, "message": "Índice reconstruido correctamente."}
 
 
+# Limpia la memoria de conversación de la sesión actual.
 @app.post("/api/memory/clear")
 def clear_memory(payload: ClearMemoryRequest):
     clear_session_memory(payload.session_id)
     return {"ok": True, "message": "Memoria de sesión limpiada correctamente."}
 
 
+# 16) ENDPOINT PRINCIPAL: /api/ask
+# Este es el corazón de la demo.
+# Recibe una pregunta y ejecuta el flujo completo:
+# 1. Limpia/valida pregunta.
+# 2. Recupera memoria.
+# 3. Construye retriever.
+# 4. Busca documentos relevantes.
+# 5. Clasifica la pregunta con el router.
+# 6. Decide si responder con RAG, web, decisión o modo mixto.
+# 7. Guarda el turno en memoria.
+# 8. Devuelve respuesta, modo y fuentes.
 @app.post("/api/ask", response_model=AskResponse)
 def ask(payload: AskRequest):
     question = payload.question.strip()
@@ -431,9 +542,12 @@ def ask(payload: AskRequest):
         return AskResponse(answer="Escribe una pregunta para poder ayudarte.", mode="VACIA", sources=[])
 
     try:
+        # Recuperamos memoria reciente para entender continuidad conversacional.
         memory_context = format_memory(session_id)
 
+        # Cargamos o creamos el vector store Chroma.
         vectorstore = get_vectorstore()
+        # Creamos el retriever: buscará los 5 fragmentos más relevantes.
         retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
 
         retrieval_query = f"""
@@ -443,22 +557,28 @@ Pregunta actual:
 Historial reciente:
 {memory_context}
 """
+        # Ejecutamos la búsqueda semántica sobre los materiales del módulo.
         docs = retriever.invoke(retrieval_query)
+        # Formateamos los documentos recuperados para pasarlos al prompt.
         module_context = format_docs(docs)
         sources = extract_sources(docs)
 
+        # El router decide qué tipo de respuesta corresponde.
         mode = classify_question(question, memory_context)
 
+        # Camino 1: pregunta externa o actualizada -> web_search.
         if mode == "WEB":
             answer = run_web_search(question, memory_context)
             save_turn(session_id, question, answer)
             return AskResponse(answer=answer, mode=mode, sources=["OpenAI web_search"])
 
+        # Camino 2: pregunta de arquitectura -> recomendación de patrón.
         if mode == "DECISION":
             answer = answer_architecture_decision(question, module_context, memory_context)
             save_turn(session_id, question, answer)
             return AskResponse(answer=answer, mode=mode, sources=sources + ["Memoria de sesión", "Contexto fijo"])
 
+        # Camino 3: combina información web con contexto del módulo.
         if mode == "MIXTA":
             web_answer = run_web_search(question, memory_context)
             combined_question = f"""
@@ -472,6 +592,7 @@ Información web:
             save_turn(session_id, question, answer)
             return AskResponse(answer=answer, mode=mode, sources=sources + ["OpenAI web_search", "Memoria de sesión", "Contexto fijo"])
 
+        # Camino 4 por defecto: respuesta académica usando contexto fijo + memoria + RAG.
         answer = answer_with_module(question, module_context, memory_context)
         save_turn(session_id, question, answer)
         return AskResponse(answer=answer, mode=mode, sources=sources + ["Memoria de sesión", "Contexto fijo"])
@@ -484,6 +605,10 @@ Información web:
         )
 
 
+
+# 17) FRONTEND HTML
+# Desde aquí empieza la interfaz visual.
+# Se deja prácticamente sin comentar para que en clase el foco esté en el backend.
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="es">
