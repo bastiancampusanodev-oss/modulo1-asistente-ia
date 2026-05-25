@@ -53,8 +53,7 @@ DATA_DIR = Path("data")
 
 # Carpeta local donde Chroma guardará el índice vectorial.
 # Si ya existe, se reutiliza para no reconstruir embeddings cada vez.
-DB_DIR = Path("chroma_modulo1")
-
+DB_DIR = Path(os.getenv("CHROMA_DIR", "/tmp/chroma_modulo1"))
 # Modelo principal para clasificar y responder.
 MODEL_NAME = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 # Modelo usado cuando activamos búsqueda web.
