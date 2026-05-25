@@ -495,13 +495,21 @@ def home():
 @app.get("/api/health")
 def health():
     files = [p.name for p in DATA_DIR.glob("*")]
+
+    db_parent = DB_DIR.parent
+    db_parent.mkdir(parents=True, exist_ok=True)
+
     return {
         "ok": True,
         "model": MODEL_NAME,
         "web_model": WEB_MODEL_NAME,
         "embedding_model": EMBEDDING_MODEL,
         "data_files": files,
+        "db_dir": str(DB_DIR),
+        "db_absolute": str(DB_DIR.resolve()),
         "db_exists": DB_DIR.exists(),
+        "db_parent_writable": os.access(db_parent, os.W_OK),
+        "chroma_env": os.getenv("CHROMA_DIR"),
         "memory_sessions": list(CONVERSATION_MEMORY.keys()),
     }
 
